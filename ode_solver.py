@@ -156,7 +156,7 @@ class adjoint_method(torch.autograd.Function):
         def aug_dynamics(aug_x_i, t_i):
             # aug_x_i = tuple(x_i, *a)
             
-            # x_i should be a tensor and a_aug?
+            # x_i should be a tensor and a_aug hat the same dimension as x_i  we ignore a_t and a_p here?
             x_i= aug_x_i[:1]
             a_aug = aug_x_i[1:2]
             flat_params = [p_.flatten() for p_ in f_params]
