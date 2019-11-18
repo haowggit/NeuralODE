@@ -28,7 +28,7 @@ class neural_ode_func(nn.Module):
         # x = adjoint_method.apply(self.func, h, x0, t, flat_params)
         # print(' neural_ode forward x0 has the shape {}'.format(x0.shape))
 
-        x, _= odeint(func, x0, t, h=None)
+        x, _= odeint(func, x0, t, h=h)
         # print(' neural_ode forward x has the shape {}'.format(type(x)))
 
         return x
@@ -104,11 +104,11 @@ class Trainer(object):
             test_set = datasets.MNIST(
                 root='.data/MNIST', train=False, download=True, transform=transform)
             train_loader = DataLoader(
-                train_set, batch_size=batch_size, shuffle=True, num_workers=6)
+                train_set, batch_size=batch_size, shuffle=True, num_workers=8)
             val_loader = DataLoader(
-                train_set, batch_size=test_batch_size, shuffle=False, num_workers=6)
+                train_set, batch_size=test_batch_size, shuffle=False, num_workers=8)
             test_loader = DataLoader(
-                test_set, batch_size=test_batch_size, shuffle=True, num_workers=6)
+                test_set, batch_size=test_batch_size, shuffle=True, num_workers=8)
             return train_set, test_set, train_loader, val_loader, test_loader
 
         self.train_set, self.test_set, self.train_loader, self.val_loader, self.test_loader = get_dataset(
@@ -134,6 +134,7 @@ class Trainer(object):
 
     def get_accuracy(self, dataset_loader):
         total_correct = 0
+        self.model.eval()
 
         for x, y in dataset_loader:
             x = x.to(self.device)
@@ -177,10 +178,10 @@ class Trainer(object):
         if not os.path.exists('./'+self.model_name):
             os.makedirs('./'+self.model_name)
 
-        self.model.train()
         start = time.time()
         sum_loss = 0
         train_iterator = iter(self.train_loader)
+        self.model.train()
 
         for i in range(self.nepochs*self.batches_per_epoch):
             if i % 20 == 0:
@@ -232,6 +233,7 @@ class Trainer(object):
                 start = time.time()
                 sum_loss = 0
                 self.epoch += 1
+                self.model.train()
         torch.save({
             'epoch': self.epoch,
             'model_state_dict': self.model.state_dict(),
@@ -333,7 +335,7 @@ if __name__ == '__main__':
     
     
     trainer.train_network()
-    trainer.visualize()
+    # trainer.visualize()
     trainer.test_model()
     print(trainer.test_acc())
 
