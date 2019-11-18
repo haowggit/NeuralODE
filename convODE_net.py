@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 import torchvision.datasets as datasets
 import matplotlib.pyplot as plt
 from ode_solver import odeint
+from ode_solver import odeint_adjoint
 from ode_solver import adjoint_method
 
 
@@ -22,9 +23,14 @@ class neural_ode_func(nn.Module):
         self. func = func
 
     def forward(self, x0, t=torch.tensor([0., 1.]), h=None):
-        f_params = self.func.parameters()
-        flat_params = torch.cat([p_.flatten() for p_ in f_params])
-        x = adjoint_method.apply(self.func, h, x0, t, flat_params)
+        # f_params = self.func.parameters()
+        # flat_params = torch.cat([p_.flatten() for p_ in f_params])
+        # x = adjoint_method.apply(self.func, h, x0, t, flat_params)
+        # print(' neural_ode forward x0 has the shape {}'.format(x0.shape))
+
+        x, _= odeint(func, x0, t, h=None)
+        # print(' neural_ode forward x has the shape {}'.format(type(x)))
+
         return x
 
 
@@ -57,15 +63,21 @@ class convODE(nn.Module):
 
     def forward(self, x, t):
         self.nfe += 1
+        # print('input x has the shape {}'.format(x.shape))
         x_out = self.norm1(x)
         x_out = self.relu(x_out)
+        # print('norm1(relu(x)) has the shape {}'.format(x_out.shape))
         x_out = movetime(x_out, t)
         x_out = self.conv1(x_out)
+        # print('conv1(x) has the shape {}'.format(x_out.shape)) 
         x_out = self.norm2(x_out)
         x_out = self.relu(x_out)
+        # print('norm2(relu(x)) has the shape {}'.format(x_out.shape))
         x_out = movetime(x_out, t)
         x_out = self.conv2(x_out)
+        # print('conv1(x) has the shape {}'.format(x_out.shape))
         x_out = self.norm3(x_out)
+        # print('norm3(x) has the shape {}'.format(x_out.shape))
         return x_out
 
 
@@ -92,11 +104,11 @@ class Trainer(object):
             test_set = datasets.MNIST(
                 root='.data/MNIST', train=False, download=True, transform=transform)
             train_loader = DataLoader(
-                train_set, batch_size=batch_size, shuffle=True, num_workers=4)
+                train_set, batch_size=batch_size, shuffle=True, num_workers=6)
             val_loader = DataLoader(
-                train_set, batch_size=test_batch_size, shuffle=False, num_workers=4)
+                train_set, batch_size=test_batch_size, shuffle=False, num_workers=6)
             test_loader = DataLoader(
-                test_set, batch_size=test_batch_size, shuffle=True, num_workers=4)
+                test_set, batch_size=test_batch_size, shuffle=True, num_workers=6)
             return train_set, test_set, train_loader, val_loader, test_loader
 
         self.train_set, self.test_set, self.train_loader, self.val_loader, self.test_loader = get_dataset(
@@ -183,7 +195,7 @@ class Trainer(object):
 
             images = images.to(self.device)
             labels = labels.to(self.device)
-            print(images.shape)
+            # print(images.shape)
             forwardpass = self.model(images)
             # calculate the loss between predicted and target keypoints
             loss = self.criterion(forwardpass, labels)
@@ -193,10 +205,11 @@ class Trainer(object):
             # update the weights
             self.optimizer.step()
 
-            if i % self.batches_per_epoch == 0:
+            if i % self.batches_per_epoch == 19:
                 avg_loss = sum_loss/self.batches_per_epoch
                 end = time.time()
                 validation_time_start = time.time()
+                print('val___________________')
                 val_acc = self.get_accu(self.val_loader)
                 train_acc = self.get_accu(self.train_loader)
                 self.train_acc_history.append(train_acc)
@@ -298,11 +311,11 @@ if __name__ == '__main__':
     downsampling_layers = [
         nn.Conv2d(in_channels=1, out_channels=64,
                   kernel_size=3, stride=1),
-        nn.GroupNorm(min(32, 64), 64),
+        nn.BatchNorm2d(64),
         nn.ReLU(inplace=True),
         nn.Conv2d(in_channels=64, out_channels=64,
                   kernel_size=4, stride=2, padding=1),
-        nn.GroupNorm(min(32, 64), 64),
+        nn.BatchNorm2d(64),
         nn.ReLU(inplace=True),
         nn.Conv2d(in_channels=64, out_channels=64,
                   kernel_size=4, stride=2, padding=1)
@@ -311,7 +324,7 @@ if __name__ == '__main__':
     func=convODE(64)
 
     feature_layers = [neural_ode_func(func)]
-    classify_layers = [nn.GroupNorm(min(32, 64), 64), nn.ReLU(
+    classify_layers = [nn.BatchNorm2d(64), nn.ReLU(
         inplace=True), nn.AdaptiveAvgPool2d((1, 1)), Flatten(), nn.Linear(64, 10)]
 
     convode_net = nn.Sequential(*downsampling_layers, *feature_layers, *classify_layers)

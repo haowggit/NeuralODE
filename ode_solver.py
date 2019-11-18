@@ -94,10 +94,10 @@ class Solver(object):
                 t_grid[-1] = t1
 
         else:
-            t_grid = T.to(device=self.device, dtype=self.dtype)
+            t_grid = T
 
         hist = [x0]
-        print(t_grid)
+        # print(t_grid)
         for t0, t1 in zip(t_grid[:-1], t_grid[1:]):
             h = t1-t0
             dx = self.step_func(self.func, x0, t0, h)
@@ -124,15 +124,17 @@ def odeint(func, x0, T, h=None):
         t1 = t0
         t0 = _t
         _base_reverse_func = func
-        def func(x, t): return -_base_reverse_func(x, t)
+        func= lambda x, t: -_base_reverse_func(x, t)
     # if isinstance(x0, tuple):
     #     tuple_input = True
     #     print('tuple_input')
     #     func= lambda x,t: tuple(_base_func(x[0], t))
+    tensor_input = False
+
 
     if torch.is_tensor(x0):
         tensor_input = True
-        print('tensor_input')
+        # print('tensor_input')
         
         # turn x0 into a tuple which has x0 as its element
         x0 = (x0,)
@@ -151,9 +153,13 @@ def odeint(func, x0, T, h=None):
     # if tensor_input:
     #     hist = hist[0]
     #     return x1[0], hist
+    x1, hist = solver.integrate(x0, T)
     if tensor_input:
-        x1, hist = solver.integrate(x0, T)
-        return x1[0], hist[0]
+        x1= x1[0]
+        # print('x1 has the shape {}'.format(x1.shape))
+
+        hist = hist[0]
+        # print('hist has the shape {}'.format(hist.shape))
     return x1, hist
 
 
@@ -217,9 +223,7 @@ class adjoint_method(torch.autograd.Function):
         # elif isinstance(x0,tuple):
         #     x0_len=len(x0)
         #     batchsize, *x_shape = x0[0].shape
-        
-        timestep= t.size(0)
-        
+                
         # print('forward input x0 has the type {} and len {}'.format(type(x0),len(x0)))
         
         ctx.func= func
@@ -228,7 +232,7 @@ class adjoint_method(torch.autograd.Function):
         with torch.no_grad():
             x, solution = odeint(func, x0, t, h)
             # solution is a tuple with a tensor of shape timestep, *xo_shape
-        print('forward() solution if of the the type {} and has the shape {}'.format(type(solution), solution.shape))
+        # print('forward() solution if of the the type {} and has the shape {}'.format(type(solution), solution[0].shape))
         ctx.save_for_backward(solution, t, flat_params)
         return x
 
@@ -281,7 +285,7 @@ class adjoint_method(torch.autograd.Function):
             if len(f_params) == 0:
                 adfdp = torch.tensor(0.).to(x_i)
             else:
-                adfdp= torch.cat([adfdp_.flatten() if adfdp_ is not None else torch.zero_like(flat_p_) for adfdp_, p_ in zip(adfdp, flat_params)])
+                adfdp= torch.cat([adfdp_.flatten() if adfdp_ is not None else torch.zero_like(p_) for adfdp_, p_ in zip(adfdp, flat_params)])
             
             # # now flatten f_eval, adfdx, adfdt...
             # f_eval = f_eval.view(batchsize, n_dim)
@@ -290,41 +294,43 @@ class adjoint_method(torch.autograd.Function):
             # f_eval -adfdx -adfdt are tensors -adfdp a flat tensor
             return (f_eval, -adfdx, -adfdt, -adfdp) 
             
-            with torch.no_grad():
-                adj_x = dLdx[-1]
-                adj_p = torch.zeros_like(flat_params).to(dLdx)
-                # In contrast to z and p we need to return gradients for all times
-                adj_t = torch.zeros(T, 1).to(t)
+        with torch.no_grad():
+            adj_x = dLdx[-1]
+            adj_p = torch.zeros_like(flat_params).to(dLdx)
+            # In contrast to z and p we need to return gradients for all times
+            adj_t = torch.zeros(T, 1).to(t)
 
-                for i in range(T-1, 0 - 1):
-                    # dLdx is a list with dLdx(t_i) at i th place
-                    dLdx_i = dLdx[i]
-                    t_i=t[i]
-                    x_i = ans[i]
-                    f_i = func(x_i,t_i)
-                    dLdt_i = sum(
-                        # torch.bmm(torch.transpose(f_i,1,2),dLdx_i)
-                        torch.dot(f_i.reshape(-1),dLdx_i.reshape(-1)).reshape(1)
-                    )
-                    print('dLdt_i is of the the type {} and has the shape {}'.format(
-                        type(dLdt_i), dLdt_i.shape))
-                    
-                    adfdt[i] = adj_t[i] - dLdt_i
-                    aug_x = (x_i, adj_x, adj_t[i], adj_p)
-                    aug_solution, _ = odeint(
-                        aug_dynamics, aug_x, torch.tensor([t[i], t[i-1]],h)
-                    ) 
+            for i in range(T-1, 0 - 1):
+                # dLdx is a list with dLdx(t_i) at i th place
+                dLdx_i = dLdx[i]
+                t_i=t[i]
+                x_i = ans[i]
+                f_i = func(x_i,t_i)
+                dLdt_i = sum(
+                    # torch.bmm(torch.transpose(f_i,1,2),dLdx_i)
+                    torch.dot(f_i.reshape(-1),dLdx_i.reshape(-1)).reshape(1)
+                )
+                # print('dLdt_i is of the the type {} and has the shape {}'.format(type(dLdt_i), dLdt_i.shape))
+                
+                adj_t[i] = adj_t[i] - dLdt_i
+                aug_x = (x_i, adj_x, adj_t[i], adj_p)
+                aug_solution, _ = odeint(
+                    aug_dynamics, aug_x, torch.tensor([t[i], t[i-1]],h)
+                ) 
 
 
-                    adj_x=aug_solution[-3]
-                    adfdt[i-1]= aug_solution[-2]
-                    adfdp = aug_solution[-1]
-                    
-                    adfdx= adfdx+dLdx[i-1]
-                    
-                    del aug_x, aug_solution
-            return None, None, adfdx, adfdt, adfdp
-        
+                adj_x=aug_solution[-3]
+                adj_t[i-1] = aug_solution[-2]
+                adj_p = aug_solution[-1]
+                
+                adj_x= adj_x+dLdx[i-1]
+                # print('adjx has the shape {}'.format(adj_x.shape))
+                # print('adjt has the shape {}'.format(adj_t.shape))
+                # print('adjp has the shape {}'.format(adj_p.shape))
+
+                del aug_x, aug_solution
+            return None, None, adj_x, adj_t, adj_p
+    
             # # flatten adfdp (.view(-1))
             # # adfdp has now a tensor of the form tensor.size([number of params])
 
@@ -334,7 +340,28 @@ class adjoint_method(torch.autograd.Function):
             # return (*f_eval, *adfdx, adfdt, adfdp)
     
 
-# def odeint_adjoint(func, x0, T, h = None):
+def odeint_adjoint(func, x0, t, h = None):
+    if not isinstance(func, nn.Module):
+        raise ValueError('func is required to be an instance of nn.Module.')
+
+    if torch.is_tensor(x0):
+        # print('tensor_input is true')
+        class TupleFunc(nn.Module):
+            def __init__(self, base_func):
+                super(TupleFunc, self).__init__()
+                self.base_func = base_func
+            def forward(self, x, t):
+                # print('TupleFunc x has the len {}'.format(len(x)))
+                return self.base_func(x, t)
+
+    func = TupleFunc(func)
+    f_params= func.parameters()
+    flat_params = torch.cat([p_.flatten() for p_ in f_params])
+    x = adjoint_method.apply(func, h, x0, t, flat_params)
+
+    # if tensor_input:
+    #     x = x[0]
+    return x
     
 
 
